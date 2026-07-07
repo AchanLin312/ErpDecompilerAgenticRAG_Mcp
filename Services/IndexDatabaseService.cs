@@ -13,29 +13,31 @@ namespace ErpDecompilerAgenticRAG_Mcp.Services;
 public class IndexDatabaseService
 {
     private readonly IDbContextFactory<ErpDbContext> _contextFactory;
-
     private readonly SqlConnection _connection;
     private readonly ILogger<IndexDatabaseService> _logger;
     private readonly string _dbPath;
-
-    public IndexDatabaseService(IDbContextFactory<ErpDbContext> contextFactory, ILogger<IndexDatabaseService> logger) //直接依赖ErpConfig和ILogger，因为这两个服务已经注册为单例服务了可以直接用
+    //按需反编译和完全反编译都会覆盖和更新相应的type和assemblymetadata，也会覆盖和更新对应的反编译源码
+    public IndexDatabaseService(IDbContextFactory<ErpDbContext> contextFactory, ILogger<IndexDatabaseService> logger)
     {
         _contextFactory = contextFactory;
         _logger = logger;
     }
 
-    //查看dll是否已经反编译过
+    //查看dll是否已经反编译过，返回是否反编译过和已反编译类型数量
     public async Task<(bool IsDecompiled, string Message)> IsAssemblyDecompiledAsync(string assemblyName)
     {
         if (string.IsNullOrWhiteSpace(assemblyName))
             return (false, "assemblyName is null or empty");
-
         using var context = await _contextFactory.CreateDbContextAsync();
         var count = await context.Types
             .Where(t => t.AssemblyName == assemblyName)
             .CountAsync();
+        var assemblyMetadata = await context.AssembliesMetadata
+            .FirstOrDefaultAsync(a => a.AssemblyName == assemblyName);
+        if(assemblyMetadata.IsFullyDecompiled == "YES")
+            return (true, $"assembly {assemblyName} is fully decompiled, decompiled type count: {assemblyMetadata.CachedTypeCount}");
 
-        return (count > 0, "");
+        return (count > 0, $"assembly {assemblyName} is not fully decompiled, only partly decompiled, decompiled type count: {assemblyMetadata.CachedTypeCount}");
     }
     //将dll的元数据储存在数据库中（仅元数据，方法体储存在文件系统中）
     public async Task<bool> SaveTypeAsync(TypeRecord record)
@@ -65,7 +67,7 @@ public class IndexDatabaseService
         return true;
     }
 
-    //删除指定Dll的所有类型的TypeRecords
+    //删除指定Dll的所有类型的TypeRecords，同时更新assemblymetadata
     public async Task<bool> DeleteTypesAsync(string assemblyName)
     {
         if (string.IsNullOrWhiteSpace(assemblyName))
@@ -76,19 +78,42 @@ public class IndexDatabaseService
         using var context = await _contextFactory.CreateDbContextAsync();
         var targetTypes = await context.Types.Where(t => t.AssemblyName == assemblyName).ToListAsync();
         context.Types.RemoveRange(targetTypes);
+
+        var targetAssembly = await context.AssembliesMetadata.FirstOrDefaultAsync(a => a.AssemblyName == assemblyName);
+        if(targetAssembly != null)
+        {
+            targetAssembly.CachedTypeCount = 0;
+            targetAssembly.IsFullyDecompiled = "NO";
+        }
         await context.SaveChangesAsync();
         return true;
     }
 
-    //获取已反编译的Dll列表(仅包含已反编译过的Dll)
-    public async Task<List<string>> GetDecompiledAssembliesAsync()
+    //获取已反编译的Dll列表(仅包含已反编译过的Dll)，包括告知这些dll是否已完全反编译过
+    public async Task<List<Dictionary<string, string>>> GetDecompiledAssembliesAsync()
     {
         using var context = await _contextFactory.CreateDbContextAsync();
-        return await context.AssembliesMetadata
-            .Where(a => a.IsFullyDecompiled == "YES")
-            .Select(a => a.AssemblyName)
-            .Distinct()
-            .ToListAsync();
+
+        var query = await context.AssembliesMetadata.ToListAsync();
+        var result = new List<Dictionary<string, string>>();
+        foreach(var assembly in query)
+        {
+            if(assembly.IsFullyDecompiled == "YES")
+            {
+                result.Add(new Dictionary<string, string>
+                {
+                    { "AssemblyName", $"{assembly.AssemblyName} (fully decompiled)" },
+                });
+            }
+            else
+            {
+                result.Add(new Dictionary<string, string>
+                {
+                    { "AssemblyName", $"{assembly.AssemblyName} (partly decompiled)" }
+                });
+            }
+        }
+        return result;
     }
 
     //获取指定dll反编译后的类型数量  
@@ -97,6 +122,7 @@ public class IndexDatabaseService
         // TODO：添加判断传入的assemblyName是否存在
         string Message = "";
         int TypeCount = 0;
+        int CachedTypeCount = 0;
         if (string.IsNullOrWhiteSpace(assemblyName))
         {
             _logger.LogError("assemblyName is null or empty");
@@ -106,25 +132,28 @@ public class IndexDatabaseService
         var targetAssembly = await context.AssembliesMetadata
             .Where(a => a.AssemblyName == assemblyName)
             .FirstOrDefaultAsync();
-        TypeCount = targetAssembly.TypeCount;
-        
+        TypeCount = targetAssembly.TotalTypeCount;
+        CachedTypeCount = targetAssembly.CachedTypeCount;
         if (targetAssembly == null)
         {
             Message = $"assembly {assemblyName} is not decompiled yet, no type count";
         }
-        var count = await context.Types
-            .Where(t => t.AssemblyName == assemblyName)
-            .CountAsync();
+        // var count = await context.AssembliesMetadata
+        //     .Where(t => t.AssemblyName == assemblyName)
+        //     .CountAsync();
         if(targetAssembly.IsFullyDecompiled != "NO")
         {
-            Message = $"assembly {assemblyName} is not fully decompiled, only partly decompiled, decompiled type count: {count}";
+            Message = $"assembly {assemblyName} is not fully decompiled, only partly decompiled, decompiled type count: {CachedTypeCount}";
         }
         if(targetAssembly.IsFullyDecompiled == "YES")
         {
-            Message = $"assembly {assemblyName} is fully decompiled, decompiled type count: {count}";
+            Message = $"assembly {assemblyName} is fully decompiled, decompiled type count: {CachedTypeCount}";
         }
         return (TypeCount, Message);
     }
+
+    //获取 DLL 元数据
+    
 
     //根据传入的关键词、Dll名称、类型种类、限制数量搜索类型的模糊搜索,assemblyName和typeKind为可选参数
     //TODO：先搞清楚具体业务再写代码

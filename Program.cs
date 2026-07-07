@@ -70,3 +70,5 @@ builder.Services.AddDbContextFactory<ErpDbContext>((sp, options) =>
     var config = sp.GetRequiredService<ErpConfig>();
     options.UseSqlite($"Data Source={config.DatabasePath}");
 }, ServiceLifetime.Scoped);
+
+builder.Services.AddSingleton<DecompilerService>();

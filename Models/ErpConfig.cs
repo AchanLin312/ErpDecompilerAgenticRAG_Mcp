@@ -7,4 +7,9 @@ public class ErpConfig
     public int MaxCallChainDepth { get; set; } = 6;
     public string DatabasePath { get; set; } = string.Empty;
     public string LogLevel { get; set; } = "Information";
+
+    public string? GetPathByAlias(string alias = "default")
+    {
+        return AlternativePaths.TryGetValue(alias, out var path) ? path : DefaultPath;
+    }
 }

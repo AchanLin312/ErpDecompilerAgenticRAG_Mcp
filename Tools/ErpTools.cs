@@ -11,16 +11,22 @@ namespace ErpDecompilerAgenticRAG_Mcp.Tools;
 //对于只获取类型名、成员名等元数据的操作， System.Reflection.Metadata 确实比 ICSharpCode.Decompiler.TypeSystem 更合适
 public class ErpTools
 {
-    public ErpTools()
+    private readonly DecompilerService _decompilerService;
+    public ErpTools(DecompilerService decompilerService)
     {
+        _decompilerService = decompilerService;
     }
 
     [McpServerTool(Name = "erp_decompile")]
     [Description(@"反编译指定的 Epicor DLL 文件并将结果存储到 SQLite 索引数据库。
-
-⚠️ 警告：反编译一个DLL可能花费数分钟时间，请谨慎使用！")]
-    public async Task<string> DecompileDll()
+     警告：反编译一个DLL可能花费数分钟时间，请谨慎使用！
+     必须参数：dll文件名（DLL文件路径，比如Erp.Service.BO.Part.dll）
+     可选参数：pathAlias: 程序集文件夹的路径别名（默认default，可用erp_list_paths查看所有可用路径）
+     ")]
+    public async Task<string> DecompileDll(string dllPath, string pathAlias = "default")
     {
+        var result = await _decompilerService.DecompileDllAsync(dllPath, pathAlias);
+        
         return "success";
     }
 
