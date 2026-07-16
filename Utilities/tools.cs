@@ -1,5 +1,9 @@
 
-﻿namespace ErpDecompilerAgenticRAG_Mcp.Utilities;
+namespace ErpDecompilerAgenticRAG_Mcp.Utilities;
+using Models;
+using ICSharpCode;
+using ICSharpCode.Decompiler.TypeSystem;
+using System.Text;
 
 public static class ErpHelper
 {
@@ -43,4 +47,57 @@ public static class ErpHelper
 
         return false;
     }
+
+    public static Models.TypeKind ConvertToTypeKind(ICSharpCode.Decompiler.TypeSystem.TypeKind ilspyKind)
+    {
+        if (ilspyKind is ICSharpCode.Decompiler.TypeSystem.TypeKind.Class)
+            return Models.TypeKind.Class;
+        if (ilspyKind is ICSharpCode.Decompiler.TypeSystem.TypeKind.Interface)
+            return Models.TypeKind.Interface;
+        if (ilspyKind is ICSharpCode.Decompiler.TypeSystem.TypeKind.Enum)
+            return Models.TypeKind.Enum;
+        if (ilspyKind is ICSharpCode.Decompiler.TypeSystem.TypeKind.Struct)
+            return Models.TypeKind.Struct;
+        return Models.TypeKind.Unknown;
+    }
+    /// 清理文件名中的非法字符
+    public static string SanitizeFileName(string fileName)
+    {
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var sanitized = new StringBuilder();
+
+        foreach (var c in fileName)
+        {
+            if (invalidChars.Contains(c))
+            {
+                sanitized.Append('_');
+            }
+            else
+            {
+                sanitized.Append(c);
+            }
+        }
+        return sanitized.ToString();
+    }
+
+    public static string GetCodeFilePath(string cacheFolder, string typeName)
+    {
+        // 按命名空间组织文件夹结构，例如: Erp.BO.SalesOrder -> Erp/BO/SalesOrder.cs
+        var parts = typeName.Split('.');
+        var namespacePath = parts.Take(parts.Length - 1).ToArray();
+        var className = parts.Last();
+
+        if (namespacePath.Length > 0)
+        {
+            return Path.Combine(cacheFolder, Path.Combine(namespacePath), $"{className}.cs");
+        }
+        else
+        {
+            return Path.Combine(cacheFolder, $"{className}.cs");
+        }
+    }
+
+
+
+
 }

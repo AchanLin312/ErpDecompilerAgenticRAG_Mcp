@@ -5,7 +5,7 @@ namespace ErpDecompilerAgenticRAG_Mcp.Models;
 public class AssemblyMetadata
 {
     [Key]
-    public string AssemblyKey { get; set; } = string.Empty;
+    public string AssemblyKey { get; set; } = string.Empty; //格式: DirectoryPath:AssemblyName
     
     public string AssemblyName { get; set; } = string.Empty;
     public string AssemblyPath { get; set; } = string.Empty;

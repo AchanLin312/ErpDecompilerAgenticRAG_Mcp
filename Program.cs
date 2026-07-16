@@ -15,6 +15,11 @@ using ErpDecompilerAgenticRAG_Mcp.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// 显式添加配置文件，确保能正确加载（使用 exe 所在目录）
+builder.Configuration
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+
 //设置命令行参数，命令行参数格式：--mode http --port 5000 --endpoint /mcp或 --mode stdio 
 var cmdMode = builder.Configuration.GetValue<string?>("mode");
 var mcpMode = !string.IsNullOrEmpty(cmdMode) ? cmdMode : "stdio"; //如果没有指定模式，默认使用stdio模式
@@ -27,6 +32,14 @@ if (mcpMode.ToLower() == "http")
     builder.WebHost.ConfigureKestrel(options =>
     {
         options.ListenAnyIP(httpPort); //指示 Kestrel 监听所有网络接口（0.0.0.0）上的 httpPort 端口，意味着任何 IP 地址（包括 localhost 和外部 IP）都能访问该服务。这通常用于容器化部署或需要对外暴露服务的场景。
+    });
+}
+else
+{
+    // stdio 模式：禁用 Kestrel HTTP 服务器（使用动态端口，实际不会对外暴露）
+    builder.WebHost.ConfigureKestrel(options =>
+    {
+        options.Listen(System.Net.IPAddress.Loopback, 0);
     });
 }
 
@@ -46,8 +59,9 @@ builder.Services.Configure<ErpConfig>(
 //拿到一个ErpConfig实例并注册为单例服务，这样其他地方通过DI注入ErpConfig类时就可以直接拿到配置好的对象
 builder.Services.AddSingleton<ErpConfig>(sp =>
     {
-        var options = sp.GetRequiredService<IOptionsMonitor<ErpConfig>>();
-        ErpConfig config = options.CurrentValue;
+        // 直接从 IConfiguration 读取配置，而不是通过 IOptionsMonitor
+        var config = new ErpConfig();
+        builder.Configuration.GetSection("ErpConfig").Bind(config);
 
         //如果需要，可以用环境变量覆盖默认值
         // config.DefaultPath = Environment.GetEnvironmentVariable("ERP_DEFAULTPATH") ?? config.DefaultPath;
@@ -72,3 +86,36 @@ builder.Services.AddDbContextFactory<ErpDbContext>((sp, options) =>
 }, ServiceLifetime.Scoped);
 
 builder.Services.AddSingleton<DecompilerService>();
+
+// builder.Services.AddSingleton<IndexDatabaseService>();
+builder.Services.AddSingleton<IndexDatabaseService>();
+
+// 注册 CacheManagerService
+builder.Services.AddSingleton<CacheManagerService>(sp =>
+{
+    var cacheDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DecompiledCache");
+    var logger = sp.GetRequiredService<ILogger<CacheManagerService>>();
+    return new CacheManagerService(cacheDirectory, logger);
+});
+
+// 注册 MCP 服务
+var mcpBuilder = builder.Services.AddMcpServer()
+    .WithToolsFromAssembly();
+
+// stdio 模式：添加 stdio 传输
+if (mcpMode.ToLower() != "http")
+{
+    mcpBuilder.WithStdioServerTransport();
+}
+
+var app = builder.Build();
+
+// 确保数据库已创建
+using (var scope = app.Services.CreateScope())
+{
+    var contextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ErpDbContext>>();
+    using var context = contextFactory.CreateDbContext();
+    context.Database.EnsureCreated();
+}
+
+app.Run();

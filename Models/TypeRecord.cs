@@ -7,10 +7,10 @@ public class TypeRecord
 {
     [Key]
     public string TypeName { get; set; } = string.Empty;
-    
-    public string AssemblyName { get; set; } = string.Empty;
+    public string AssemblyKey { get; set; } = string.Empty;
     public string AssemblyPath { get; set; } = string.Empty;
     public TypeKind TypeKind { get; set; } = TypeKind.Unknown;
     public string CodeFilePath { get; set; } = string.Empty;
     public DateTime DecompileTime { get; set; }
+
 }

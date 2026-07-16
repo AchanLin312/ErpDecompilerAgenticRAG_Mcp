@@ -12,4 +12,22 @@ public class ErpConfig
     {
         return AlternativePaths.TryGetValue(alias, out var path) ? path : DefaultPath;
     }
+
+    public Dictionary<string, string> GetAllPaths()
+    {
+        var paths = new Dictionary<string, string>();
+        // 默认路径使用 "default" 作为别名
+        if (!string.IsNullOrEmpty(DefaultPath))
+        {
+            paths["default"] = DefaultPath;
+        }
+
+        // 添加非默认路径
+        foreach (var altPath in AlternativePaths)
+        {
+            paths[altPath.Key] = altPath.Value;
+        }
+
+        return paths;
+    }
 }

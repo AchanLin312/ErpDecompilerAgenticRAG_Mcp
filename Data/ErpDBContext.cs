@@ -19,7 +19,7 @@ public class ErpDbContext : DbContext
     {
 
         modelBuilder.Entity<TypeRecord>()
-            .HasIndex(t => t.AssemblyName);
+            .HasIndex(t => t.AssemblyKey);
 
         modelBuilder.Entity<TypeRecord>()
             .HasIndex(t => t.TypeKind);
