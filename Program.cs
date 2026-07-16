@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Server;
 using ErpDecompilerAgenticRAG_Mcp.Models;
 using ErpDecompilerAgenticRAG_Mcp.Services;
@@ -102,9 +103,14 @@ builder.Services.AddSingleton<CacheManagerService>(sp =>
 var mcpBuilder = builder.Services.AddMcpServer()
     .WithToolsFromAssembly();
 
-// stdio 模式：添加 stdio 传输
-if (mcpMode.ToLower() != "http")
+if (mcpMode.ToLower() == "http")
 {
+    // HTTP 模式：使用 Streamable HTTP 传输（MCP spec 2025-11-25 推荐方式）
+    mcpBuilder.WithHttpTransport();
+}
+else
+{
+    // stdio 模式：添加 stdio 传输
     mcpBuilder.WithStdioServerTransport();
 }
 
@@ -116,6 +122,12 @@ using (var scope = app.Services.CreateScope())
     var contextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ErpDbContext>>();
     using var context = contextFactory.CreateDbContext();
     context.Database.EnsureCreated();
+}
+
+// HTTP 模式：映射 MCP 端点（Streamable HTTP，默认路径 /mcp）
+if (mcpMode.ToLower() == "http")
+{
+    app.MapMcp(endPoint!);
 }
 
 app.Run();

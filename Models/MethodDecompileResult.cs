@@ -16,10 +16,10 @@ public class MethodDecompileResult
     public string MethodCode { get; set; } = string.Empty;
 
     // 调用链深度
-    public int CallChainDepth { get; set; }
+    // public int CallChainDepth { get; set; }
 
     // 被调用的方法列表（递归追踪）
-    public List<CalledMethod> CalledMethods { get; set; } = new();
+    // public List<CalledMethod> CalledMethods { get; set; } = new();
 
     // 总方法数（包含主方法）
     public int TotalMethods { get; set; }

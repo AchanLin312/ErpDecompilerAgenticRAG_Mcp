@@ -1,4 +1,4 @@
-﻿namespace ErpDecompilerAgenticRAG_Mcp.Models;
+namespace ErpDecompilerAgenticRAG_Mcp.Models;
 
 /// 按需反编译单个类型的结果
 public class OnDemandDecompileResult

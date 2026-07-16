@@ -85,7 +85,7 @@ public class IndexDatabaseService
             return false;
         }
         using var context = await _contextFactory.CreateDbContextAsync();
-        var targetTypes = await context.Types.Where(t => t.AssemblyKey.EndsWith(assemblyName)).ToListAsync();
+        var targetTypes = await context.Types.Where(t => t.AssemblyKey.EndsWith(":" + assemblyName)).ToListAsync();
         context.Types.RemoveRange(targetTypes);
 
         var targetAssembly = await context.AssembliesMetadata.FirstOrDefaultAsync(a => a.AssemblyName == assemblyName);
@@ -141,22 +141,20 @@ public class IndexDatabaseService
         var targetAssembly = await context.AssembliesMetadata
             .Where(a => a.AssemblyName == assemblyName)
             .FirstOrDefaultAsync();
-        TypeCount = targetAssembly.TotalTypeCount;
-        CachedTypeCount = targetAssembly.CachedTypeCount;
         if (targetAssembly == null)
         {
             Message = $"assembly {assemblyName} is not decompiled yet, no type count";
+            return (0, Message);
         }
-        // var count = await context.AssembliesMetadata
-        //     .Where(t => t.AssemblyName == assemblyName)
-        //     .CountAsync();
-        if (targetAssembly.IsFullyDecompiled != "NO")
-        {
-            Message = $"assembly {assemblyName} is not fully decompiled, only partly decompiled, decompiled type count: {CachedTypeCount}";
-        }
+        TypeCount = targetAssembly.TotalTypeCount;
+        CachedTypeCount = targetAssembly.CachedTypeCount;
         if (targetAssembly.IsFullyDecompiled == "YES")
         {
             Message = $"assembly {assemblyName} is fully decompiled, decompiled type count: {CachedTypeCount}";
+        }
+        else
+        {
+            Message = $"assembly {assemblyName} is not fully decompiled, only partly decompiled, decompiled type count: {CachedTypeCount}";
         }
         return (TypeCount, Message);
     }
@@ -207,7 +205,13 @@ public class IndexDatabaseService
             return true;
         }
 
-        // 文件未修改，不需要更新
+        // 如果未完全反编译，也需要更新（继续完成反编译）
+        if (metadata.IsFullyDecompiled != "YES")
+        {
+            return true;
+        }
+
+        // 文件未修改且已完全反编译，不需要更新
         return false;
     }
 
@@ -259,8 +263,8 @@ public class IndexDatabaseService
         return sucess;
     }
 
-    //增加指定dll的AssemblyMetadata记录的CachedTypeCount
-       public async Task<bool> AssemblyMetadataCachedTypeCountPlus1Async(string assemblyName)
+    //增加指定dll的AssemblyMetadata记录的CachedTypeCount，且若更新了CachedTypeCount字段等于totalTypeCount，就更新IsFullyDecompiled为"YES"
+    public async Task<bool> AssemblyMetadataCachedTypeCountPlus1Async(string assemblyName)
     {
         var sucess = false;
         using var context = await _contextFactory.CreateDbContextAsync();
@@ -271,6 +275,10 @@ public class IndexDatabaseService
             return false;
         }
         targetAssembly.CachedTypeCount++;
+        if (targetAssembly.CachedTypeCount == targetAssembly.TotalTypeCount)
+        {
+            targetAssembly.IsFullyDecompiled = "YES";
+        }
         await context.SaveChangesAsync();
         sucess = true;
         return sucess;
@@ -329,6 +337,12 @@ public class IndexDatabaseService
     }
 
 
+    public async Task<List<string>> GetCachedTypeNamesAsync(string assemblyKey)
+    {
+        using var context = await _contextFactory.CreateDbContextAsync();
+        var typesRecords = await context.Types.Where(t => t.AssemblyKey == assemblyKey).Select(t => t.TypeName).ToListAsync();
+        return typesRecords;
+    }
 
 
 

@@ -41,6 +41,15 @@ public class CacheManagerService
         }
     }
 
+    /// <summary>
+    /// 获取指定类型在缓存中的完整文件路径
+    /// </summary>
+    public string GetTypeCodeFilePath(string assemblyKey, string typeName)
+    {
+        var cacheFolder = Path.Combine(_cacheDirectory, ErpHelper.SanitizeFileName(assemblyKey));
+        return ErpHelper.GetCodeFilePath(cacheFolder, typeName);
+    }
+
     //接受dll文件路径、assemblyKey、反编译得到的类型列表，保存到缓存目录
     public async Task SaveToCacheAsync(string dllPath, string assemblyKey, List<DecompiledType> types)
     {

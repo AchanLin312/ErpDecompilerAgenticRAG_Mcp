@@ -96,7 +96,16 @@ public class DecompilerService
             return result;
         }
 
-        var fullPath = Path.Combine(_config.GetPathByAlias(pathAlias), dllName);
+        var basePath = _config.GetPathByAlias(pathAlias);
+        if (string.IsNullOrEmpty(basePath))
+        {
+            result.Success = false;
+            result.Message = $"Path alias '{pathAlias}' not found in configuration";
+            _logger.LogError(result.Message);
+            return result;
+        }
+
+        var fullPath = Path.Combine(basePath, dllName);
 
         if (!File.Exists(fullPath))
         {
@@ -242,11 +251,11 @@ public class DecompilerService
         var searchPath = _config.GetPathByAlias(alias);
         if (string.IsNullOrWhiteSpace(searchPath))
         {
-            message = "searchPath is null or empty";
+            return (new List<string>(), $"Path alias '{alias}' not found in configuration");
         }
         if (!Directory.Exists(searchPath))
         {
-            message = $"searchPath {searchPath} does not exist";
+            return (new List<string>(), $"searchPath {searchPath} does not exist");
         }
         resultLst = Directory.GetFiles(searchPath, "*.dll").ToList();
         message = $"searchPath {searchPath} has {resultLst.Count} dll files";
@@ -264,6 +273,12 @@ public class DecompilerService
         {
             _logger.LogWarning("keyword or dllNameHint is null or empty");
             return (new List<TypeSearchResult>(), "keyword or dllNameHint is null or empty");
+        }
+
+        var basePath = _config.GetPathByAlias(pathAlias);
+        if (string.IsNullOrEmpty(basePath))
+        {
+            return (new List<TypeSearchResult>(), $"Path alias '{pathAlias}' not found in configuration");
         }
 
         //从数据库中查询类型
@@ -427,7 +442,7 @@ public class DecompilerService
             if (string.IsNullOrEmpty(dllPath))
             {
                 result.Success = false;
-                result.Message = $"dllPath {dllPath} does not exist";
+                result.Message = $"DLL {dllName} not found in path alias {pathAlias}";
                 return result;
             }
             //从数据库和缓存中找这个type的源码
@@ -461,12 +476,12 @@ public class DecompilerService
                     TypeName = typeName,
                     Code = code,
                     TypeKind = targetType.Kind.ToString(),
-                    CodeFilePath = dllPath
+                    CodeFilePath = _cache.GetTypeCodeFilePath(assemblyKey, typeName)
                 }
             };
             //反编译成功，缓存起来
             await _cache.SaveToCacheAsync(dllPath, assemblyKey, types);
-            //反编译成功，更新数据到数据库
+            //反编译成功，更新TypeRecord数据到数据库
             var saveSucess = await SaveTypeMetadataAsync(typeName, assemblyKey, dllPath, targetType.Kind.ToString());
             if (saveSucess)
             {
@@ -886,50 +901,297 @@ public class DecompilerService
         }
     }
 
-    //反编译指定dll中的指定method，可以递归追踪同一个类型文件内的方法（并非同一个dll或者同一个类型，而是同一个类型文件，也就是同一个.cs文件），但前提是这个method所在的type之前已经反编译过，也就是缓存中已经有了这个type的反编译源码
-    public async Task<MethodDecompileResult> DecompileMethodAsync(string methodFullName,string dllName,string pathAlias = "default")
+    //反编译指定dll中的指定某个method，无论method所在的类型是否被缓存过，都会调用CSharpDecompiler反编译该方法（但是如果没有缓存，会先反编译类型再缓存）
+    public async Task<MethodDecompileResult> DecompileMethodAsync(string methodFullName, string dllName, string pathAlias = "default")
+    {
+        var result = new MethodDecompileResult();
+        try
         {
-            var result = new MethodDecompileResult();
-            try
+            //验证传入的方法全名
+            var parts = methodFullName.Split('.');
+            if (parts.Length < 2)
             {
-                //验证传入的方法全名
-                var parts = methodFullName.Split('.');
-                if (parts.Length < 2)
+                result.Success = false;
+                result.Message = "方法全名格式错误，应为命名空间.类型名.方法名";
+                result.MethodFullName = methodFullName;
+                return result;
+            }
+
+            var methodName = parts[parts.Length - 1];
+            var typeName = string.Join(".", parts.Take(parts.Length - 1));
+
+            //从数据库中获取类型代码文件路径
+            var codeFilePath = await _db.GetTypeCodeFilePathAsync(typeName);
+            //获取dllPath和decompiler
+            var dllPath = ResolveDllPath(dllName, pathAlias);
+            if (string.IsNullOrEmpty(dllPath))
+            {
+                result.Success = false;
+                result.Message = $"DLL {dllName} not found in path alias {pathAlias}";
+                result.MethodFullName = methodFullName;
+                return result;
+            }
+            var decompiler = GetOrCreateDecompiler(dllPath);
+            var assemblyKey = $"{pathAlias}:{dllName}";
+            //如果路径为空，说明该类型未缓存过，需先反编译类型再缓存
+            if (codeFilePath == null)
+            {
+                var typeSystem = decompiler.TypeSystem;
+                var targetType = typeSystem.MainModule.TypeDefinitions.FirstOrDefault(t => t.FullName == typeName);
+                //如果method所处的类型不存在于这个dll中，就报错
+                if (targetType == null)
                 {
                     result.Success = false;
-                    result.Message = "方法全名格式错误，应为命名空间.类型名.方法名";
+                    result.Message = $"The type {typeName} containing method {methodFullName} does not exist in the assembly {dllName}! Please ensure that the type exists in the assembly and is not a generic type!";
                     result.MethodFullName = methodFullName;
                     return result;
                 }
+                var typeCode = decompiler.DecompileTypeAsString(targetType.FullTypeName);
+                var typeList = new List<DecompiledType>
+                {
+                    new DecompiledType
+                    {
+                        TypeName = typeName,
+                        Code = typeCode,
+                        TypeKind = targetType.Kind.ToString(),
+                        CodeFilePath = _cache.GetTypeCodeFilePath(assemblyKey, typeName)
+                    }
+                };
 
-                var methodName = parts[parts.Length - 1];
-                var typeName = string.Join(".", parts.Take(parts.Length - 1));
-
-                //从数据库中获取类型代码文件路径
-                var codeFilePath = await _db.GetTypeCodeFilePathAsync(typeName);
-                if(codeFilePath == null)
+                //生成对应的TypeRecord记录到数据库，同时更新对应的AssemblyMetadata
+                var saveSuccess = await SaveTypeMetadataAsync(typeName, assemblyKey, dllPath, targetType.Kind.ToString());
+                if (saveSuccess)
+                {
+                    result.Message += $"Cache type {typeName} sucessfully!";
+                }
+                else
                 {
                     result.Success = false;
-                    result.Message = $"方法{methodFullName}的所在的类型{typeName}代码文件不存在!需要先反编译类型{typeName}才能有方法{methodName}的反编译源码！";
+                    result.Message = $"Cache type {typeName} failed!";
                     result.MethodFullName = methodFullName;
                     return result;
                 }
-                //代码路径存在，读取文件内容
-                var typeCode = await File.ReadAllTextAsync(codeFilePath);
-
-                //构建调用链
-
-                
-
+                //反编译成功，缓存起来
+                await _cache.SaveToCacheAsync(dllPath, assemblyKey, typeList);
             }
-            catch (System.Exception)
+
+            //代码路径存在，说明类型已缓存，但是无论有没有缓存到，都会调用CSharpDecompiler反编译该方法获得源码
+            // var typeCode = await File.ReadAllTextAsync(codeFilePath);
+            var fullTypeName = new FullTypeName(typeName);
+            var type = decompiler.TypeSystem.FindType(fullTypeName).GetDefinition();
+            if (type == null)
             {
-                
-                throw;
+                result.Success = false;
+                result.Message += $"The Type of Method {typeName} not found!";
+                result.MethodFullName = methodFullName;
+                return result;
             }
+            //从type中寻找方法
+            var method = type.Methods.FirstOrDefault(m => m.Name == methodName);
+            if (method == null)
+            {
+                result.Success = false;
+                result.Message += $"Method {methodFullName} can not be found in type {typeName}!";
+                result.MethodFullName = methodFullName;
+                return result;
+            }
+            //反编译单个方法(不知道这样得到的单个方法反编译源码包不包含XML文档注释)
+            var methodCode = decompiler.DecompileAsString(method.MetadataToken);
+
+            result.Success = true;
+            result.MethodCode = methodCode;
+            result.MethodFullName = methodFullName;
+            result.TotalMethods = 1; //单方法反编译永远是1
+            result.IncludeXmlDoc = true;//反编译默认包含XML文档注释
+            result.Message += $"Extract method {methodFullName} sucessfully!";
+            return result;
+
         }
-        
-    
+        catch (System.Exception ex)
+        {
+            result.Success = false;
+            result.Message = $"Extract method {methodFullName} failed! Error: {ex.Message}";
+            result.MethodFullName = methodFullName;
+            return result;
+        }
+    }
+    //搜索成员，因为数据库中只存在typerecord这种类型级别的记录，所以是无法通过类型定位到成员的，所以只能用Refelction.Metadata来搜索成员
+    //    流程：
+    // 1. 从数据库获取该 DLL 中已缓存的类型名称集合（快，用于标记 source）
+    // 2. 用 Reflection.Metadata 遍历 DLL 中所有类型的所有成员，匹配 keyword
+    // 3. 如果成员所属的类型已缓存 → source = "cache"
+    // 4. 如果成员所属的类型未缓存 → source = "metadata"
+    // 5. 去重合并返回
+    public async Task<MemberSearchResult> SearchMemberAsync(string keyword, string dllName, string pathAlias)
+    {
+        var result = new MemberSearchResult
+        {
+            Keyword = keyword,
+            AssemblyName = dllName
+        };
+
+        try
+        {
+            var dllPath = ResolveDllPath(dllName, pathAlias);
+            if (string.IsNullOrEmpty(dllPath) || !File.Exists(dllPath))
+            {
+                result.Success = false;
+                result.Message = $"DLL {dllName} not found in path alias {pathAlias}";
+                return result;
+            }
+
+            var assemblyKey = $"{pathAlias}:{dllName}";
+            //获取这个dll的所有的在数据库中所有已存在的typeRecord记录,用于标记source
+            var cachedTypeNames = await _db.GetCachedTypeNamesAsync(assemblyKey);
+
+            //用System.Reflection.Metadata来搜索成员
+            using var stream = File.OpenRead(dllPath);
+            using var peReader = new PEReader(stream);
+            var reader = peReader.GetMetadataReader();
+
+            //收集属性访问器方法名，用于过滤
+            var accessorNames = new HashSet<string>();
+            foreach (var typeDefHandle in reader.TypeDefinitions)
+            {
+                var typeDef = reader.GetTypeDefinition(typeDefHandle);
+                foreach (var propHandle in typeDef.GetProperties())
+                {
+                    var prop = reader.GetPropertyDefinition(propHandle);
+                    var propName = reader.GetString(prop.Name);
+                    accessorNames.Add($"get_{propName}");
+                    accessorNames.Add($"set_{propName}");
+                }
+                foreach (var eventHandle in typeDef.GetEvents())
+                {
+                    var eventDef = reader.GetEventDefinition(eventHandle);
+                    var eventName = reader.GetString(eventDef.Name);
+                    accessorNames.Add($"add_{eventName}");
+                    accessorNames.Add($"remove_{eventName}");
+                    accessorNames.Add($"raise_{eventName}");
+                }
+            }
+
+            foreach (var typeDefHandle in reader.TypeDefinitions)
+            {
+                var typeDef = reader.GetTypeDefinition(typeDefHandle);
+                var typeName = GetFullTypeName(reader, typeDef, reader.GetString(typeDef.Name), reader.GetString(typeDef.Namespace));
+
+                //跳过编译器生成的类型
+                if (typeName.StartsWith("<") || typeName.Contains(">") ||
+                    typeName.StartsWith("__") || typeName.Contains("AnonymousType") ||
+                    typeName.Contains("DisplayClass"))
+                {
+                    continue;
+                }
+
+                var isCached = cachedTypeNames.Contains(typeName);
+
+                //搜索方法
+                foreach (var methodHandle in typeDef.GetMethods())
+                {
+                    var method = reader.GetMethodDefinition(methodHandle);
+                    var methodName = reader.GetString(method.Name);
+
+                    //跳过构造函数、属性访问器、事件访问器
+                    if (methodName == ".ctor" || methodName == ".cctor" ||
+                        accessorNames.Contains(methodName))
+                    {
+                        continue;
+                    }
+
+                    if (methodName.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.Matches.Add(new MemberSearchMatch
+                        {
+                            MemberName = methodName,
+                            MemberFullName = $"{typeName}.{methodName}",
+                            TypeName = typeName,
+                            MemberType = "Method",
+                            Source = isCached ? "cache" : "metadata"
+                        });
+                    }
+                }
+
+                //搜索属性
+                foreach (var propHandle in typeDef.GetProperties())
+                {
+                    var prop = reader.GetPropertyDefinition(propHandle);
+                    var propName = reader.GetString(prop.Name);
+
+                    if (propName.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.Matches.Add(new MemberSearchMatch
+                        {
+                            MemberName = propName,
+                            MemberFullName = $"{typeName}.{propName}",
+                            TypeName = typeName,
+                            MemberType = "Property",
+                            Source = isCached ? "cache" : "metadata"
+                        });
+                    }
+                }
+
+                //搜索字段
+                foreach (var fieldHandle in typeDef.GetFields())
+                {
+                    var field = reader.GetFieldDefinition(fieldHandle);
+                    var fieldName = reader.GetString(field.Name);
+
+                    //跳过编译器生成的字段
+                    if (fieldName.StartsWith("<") || fieldName.Contains(">") ||
+                        fieldName.StartsWith("__"))
+                    {
+                        continue;
+                    }
+
+                    if (fieldName.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.Matches.Add(new MemberSearchMatch
+                        {
+                            MemberName = fieldName,
+                            MemberFullName = $"{typeName}.{fieldName}",
+                            TypeName = typeName,
+                            MemberType = "Field",
+                            Source = isCached ? "cache" : "metadata"
+                        });
+                    }
+                }
+
+                //搜索事件
+                foreach (var eventHandle in typeDef.GetEvents())
+                {
+                    var eventDef = reader.GetEventDefinition(eventHandle);
+                    var eventName = reader.GetString(eventDef.Name);
+
+                    if (eventName.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.Matches.Add(new MemberSearchMatch
+                        {
+                            MemberName = eventName,
+                            MemberFullName = $"{typeName}.{eventName}",
+                            TypeName = typeName,
+                            MemberType = "Event",
+                            Source = isCached ? "cache" : "metadata"
+                        });
+                    }
+                }
+            }
+
+            result.Success = true;
+            result.TotalMatches = result.Matches.Count;
+            var cacheCount = result.Matches.Count(m => m.Source == "cache");
+            var metadataCount = result.Matches.Count(m => m.Source == "metadata");
+            result.Message = $"Found {result.TotalMatches} members matching '{keyword}' in {dllName} (cache: {cacheCount}, metadata: {metadataCount})";
+        }
+        catch (Exception ex)
+        {
+            result.Success = false;
+            result.Message = $"Error searching members: {ex.Message}";
+        }
+
+        return result;
+    }
+
 
     // 获取类型的完整名称（包括命名空间和嵌套类型路径）
     private string GetFullTypeName(MetadataReader reader, TypeDefinition typeDef, string typeName, string namespaceName)
@@ -987,7 +1249,7 @@ public class DecompilerService
     //将单个反编译得到的typeRecord储存到数据库中并且更新对应的dll的AssemblyMetadata
     private async Task<bool> SaveTypeMetadataAsync(string typeName, string assemblyKey, string dllPath, string typeKind)
     {
-        var codeFilePath = Path.Combine(dllPath, typeName.Replace('.', Path.DirectorySeparatorChar) + ".cs");
+        var codeFilePath = _cache.GetTypeCodeFilePath(assemblyKey, typeName);
         var typeRecord = new TypeRecord
         {
             TypeName = typeName,
@@ -1002,10 +1264,12 @@ public class DecompilerService
         return saveSucess && updateSucess;
     }
 
-    //在按需获取了一个tpye的源码后，更新对应的dll的AssemblyMetadata中的CachedCount字段，若这个dll此时还没有AssemblyMetadata记录，就创建一个记录，CachedCount设为1
+    //在按需获取了一个tpye的源码后，更新对应的dll的AssemblyMetadata中的CachedCount字段，若这个dll此时还没有AssemblyMetadata记录，就创建一个记录，CachedCount设为1，若更新了CachedCount字段等于totalTypeCount，就更新IsFullyDecompiled为"YES"
     private async Task<bool> UpdateAssemblyCachedCountAsync(string assemblyKey, string dllPath)
     {
-        var dllName = assemblyKey.Split('.')[1];
+        // assemblyKey 格式: "alias:dllName.dll"，需要提取 dllName 部分
+        var colonIndex = assemblyKey.IndexOf(':');
+        var dllName = colonIndex >= 0 ? assemblyKey.Substring(colonIndex + 1) : assemblyKey;
         var metadata = await _db.GetAssemblyMetadataAsync(dllName);
         //若数据库中没有这个dll的记录，就创建一个记录，CachedCount设为1
         if (metadata == null)
@@ -1020,7 +1284,7 @@ public class DecompilerService
             var saveSucess = await _db.SaveAssemblyMetadataAsync(assemblyKey, dllName, dllPath, fileInfo.LastWriteTime, fileInfo.Length, totalTypeCount, 1, "NO", DateTime.UtcNow);
             return saveSucess;
         }
-        //若有这个记录，就更新CachedCount字段加1
+        //若有这个记录，就更新CachedCount字段加1，视情况更新Status为"YES"
         var updateSucess = await _db.AssemblyMetadataCachedTypeCountPlus1Async(dllName);
         return updateSucess;
     }

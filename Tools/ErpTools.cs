@@ -260,34 +260,57 @@ public class ErpTools
     }
 
     [McpServerTool(Name = "erp_decompile_method")]
-    [Description(@"读取指定的Dll中的Epicor方法的反编译源码，获取完整的 C# 代码逻辑（只能获取已缓存的反编译的类型中的方法的源码，如果类型之前未反编译过，也就没有缓存，会报错！），支持自动递归追踪其调用的私有/静态方法（但是只能递归追踪同一个类型文件内的方法，不能跨类型文件调用）。
+    [Description(@"读取指定的Dll中的单个Epicor方法的反编译源码，获取C# 代码逻辑但不包括被调用方法的实现（只能获取已缓存的反编译的类型中的方法的源码，如果类型之前未反编译过，也就没有缓存，会报错！），支持自动递归追踪其调用的私有/静态方法（但是只能递归追踪同一个类型文件内的方法，不能跨类型文件调用）。
+
 必需参数：
 - methodFullName: 方法的全限定名（如 Erp.BO.PartSvc.GetPart）
+- dllName: DLL名称（如 Erp.Services.BO.Part.dll）
+- pathAlias: 限定搜索的路径别名（可选，默认为 default）
+
+提示：
+如果需要了解方法内部调用的其他方法，可以单独调用此工具获取。
 
     ")]
-    //该tool只会去数据库和缓存中查找，如果查不到会报错而不是去主动反编译
+    //该tool会优先去数据库和缓存中找这个method的类型的源代码，但即使类型已缓存，也用 CSharpDecompiler 反编译单个方法
     public async Task<string> DecompileMethod(
-    [Description("方法的全限定名（如 Ice.Services.BO.KineticErpSvc.GetConfirmDialogUserOptions，或Erp.BO.PartSvc.GetPart）")] string methodFullName, 
-    [Description("DLL名称（如 Erp.Services.BO.Part.dll）")] string dllName, 
+    [Description("方法的全限定名（如 Ice.Services.BO.KineticErpSvc.GetConfirmDialogUserOptions，或Erp.BO.PartSvc.GetPart）")] string methodFullName,
+    [Description("DLL名称（如 Erp.Services.BO.Part.dll）")] string dllName,
     [Description("路径别名（默认default）")] string pathAlias = "default"
     )
     {
         var result = await _decompilerService.DecompileMethodAsync(methodFullName, dllName, pathAlias);
-        return "success";
+        return JsonSerializer.Serialize(result, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true
+        });
     }
 
-    [McpServerTool(Name = "erp_extract_db_references")]
-    [Description(@"静态分析指定方法的反编译代码，提取其中引用的 Epicor 数据库表名。用于与数据库MCP进行关联分析，先从数据库中查，没有的话再反编译查一次")]
-    public async Task<string> ExtractDbReferences(string typeName, string methodName)
-    {
-        return "success";
-    }
+    // [McpServerTool(Name = "erp_extract_db_references")]
+    // [Description(@"静态分析指定方法的反编译代码，提取其中引用的 Epicor 数据库表名。用于与数据库MCP进行关联分析，先从数据库中查，没有的话再反编译查一次")]
+    // public async Task<string> ExtractDbReferences(string typeName, string methodName)
+    // {
+    //     return "success";
+    // }
 
     [McpServerTool(Name = "erp_search_members")]
-    [Description(@"在程序集中按关键字搜索成员，先从数据库中查，没有的话再反编译查一次（也不一定，用Reflection.Metadata也可以）。")]
-    public async Task<string> SearchMembers(string keyword)
+    [Description(@"在指定的的dll程序集中按关键字搜索成员。
+    
+    必需参数：
+- keyword: 搜索关键字（如 GetPart, Update, MinOrderQty）
+- assemblyName: DLL名称（如 Erp.Services.BO.Part.dll）
+- pathAlias: 限定搜索的路径别名（可选，默认为 default）
+    
+    ")]
+    //这个tool先去这个dll的缓存中找，找不到的话就用DLL 元数据（Reflection.Metadata）找
+    public async Task<string> SearchMembers([Description("搜索关键字（如 Authenticate, GetConfirmDialog）")]string keyword, [Description("DLL名称（如 Ice.Services.BO.KineticErp.dll）")]string assemblyName, [Description("路径别名（默认default）")] string pathAlias = "default")
     {
-        return "success";
+        var result = await _decompilerService.SearchMemberAsync(keyword, assemblyName, pathAlias);
+        return JsonSerializer.Serialize(result, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true
+        });
     }
 
     //    [McpServerTool(Name = "erp_remove_decompiled")]

@@ -1,4 +1,4 @@
-﻿namespace ErpDecompilerAgenticRAG_Mcp.Models;
+namespace ErpDecompilerAgenticRAG_Mcp.Models;
 
 public class ErpConfig
 {
@@ -10,7 +10,9 @@ public class ErpConfig
 
     public string? GetPathByAlias(string alias = "default")
     {
-        return AlternativePaths.TryGetValue(alias, out var path) ? path : DefaultPath;
+        if (alias == "default")
+            return DefaultPath;
+        return AlternativePaths.TryGetValue(alias, out var path) ? path : null;
     }
 
     public Dictionary<string, string> GetAllPaths()
