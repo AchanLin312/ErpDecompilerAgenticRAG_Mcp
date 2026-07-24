@@ -121,7 +121,7 @@ public class ErpTools
     }
 
 
-    [McpServerTool(Name = "erp_list_dll_infomation")]
+    [McpServerTool(Name = "erp_list_dll_information")]
     [Description(@"列出指定 DLL的详细信息（类型数量、路径别名，有没有被完全反编译），如果这个dll没有被反编译，会返回这个dll没有被反编译的信息, 可选参数：
 - pathAlias: 路径别名（默认default）
 示例调用：
@@ -303,7 +303,7 @@ public class ErpTools
     
     ")]
     //这个tool先去这个dll的缓存中找，找不到的话就用DLL 元数据（Reflection.Metadata）找
-    public async Task<string> SearchMembers([Description("搜索关键字（如 Authenticate, GetConfirmDialog）")]string keyword, [Description("DLL名称（如 Ice.Services.BO.KineticErp.dll）")]string assemblyName, [Description("路径别名（默认default）")] string pathAlias = "default")
+    public async Task<string> SearchMembers([Description("搜索关键字（如 Authenticate, GetConfirmDialog）")] string keyword, [Description("DLL名称（如 Ice.Services.BO.KineticErp.dll）")] string assemblyName, [Description("路径别名（默认default）")] string pathAlias = "default")
     {
         var result = await _decompilerService.SearchMemberAsync(keyword, assemblyName, pathAlias);
         return JsonSerializer.Serialize(result, new JsonSerializerOptions
@@ -316,5 +316,59 @@ public class ErpTools
     //    [McpServerTool(Name = "erp_remove_decompiled")]
     //     [Description(@"删除 SQLite 中指定 DLL 的反编译数据。注意：主要用于 DLL 更新后重新反编译。
     // ")]
+
+    // ========== 无状态反编译工具（任意本地 DLL）==========
+
+    [McpServerTool(Name = "decompile_any_list_types")]
+    [Description(@"列出本地计算机上任意 .NET DLL 文件中的所有类型（通过元数据读取，速度极快）。配合erp_search_members, erp_decompile_any_type工具使用。
+
+必需参数：
+- dllPath: DLL 文件的完整路径（如 C:\\Users\\...\\bin\\Debug\\net9.0\\MyApp.dll）")]
+    public string DecompileAnyListTypes(
+        [Description("DLL 文件的完整路径（例如 C:\\Users\\...\\MyApp.dll）")] string dllPath)
+    {
+        var result = _decompilerService.DecompileAnyListTypes(dllPath);
+        return JsonSerializer.Serialize(result, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true
+        });
+    }
+
+    [McpServerTool(Name = "decompile_any_type")]
+    [Description(@"反编译本地计算机上任意 .NET DLL 文件中的单个类型的完整 C# 源码。配合erp_search_members, erp_decompile_any_type工具使用。
+
+必需参数：
+- dllPath: DLL 文件的完整路径
+- typeName: 类型的全限定名（如 MyApp.Services.UserService）")]
+    public string DecompileAnyType(
+        [Description("DLL 文件的完整路径（例如 C:\\Users\\...\\MyApp.dll）")] string dllPath,
+        [Description("类型的全限定名（例如 MyApp.Program）")] string typeName)
+    {
+        var result = _decompilerService.DecompileAnyType(dllPath, typeName);
+        return JsonSerializer.Serialize(result, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true
+        });
+    }
+
+    [McpServerTool(Name = "decompile_any_method")]
+    [Description(@"反编译本地计算机上任意 .NET DLL 文件中的单个方法的 C# 源码。配合erp_search_members, erp_decompile_any_type工具使用。
+
+必需参数：
+- dllPath: DLL 文件的完整路径
+- methodFullName: 方法的全限定名（如 MyApp.Program.Main）")]
+    public string DecompileAnyMethod(
+        [Description("DLL 文件的完整路径（例如 C:\\Users\\...\\MyApp.dll）")] string dllPath,
+        [Description("方法的全限定名（例如 MyApp.Program.Main）")] string methodFullName)
+    {
+        var result = _decompilerService.DecompileAnyMethod(dllPath, methodFullName);
+        return JsonSerializer.Serialize(result, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true
+        });
+    }
 
 }

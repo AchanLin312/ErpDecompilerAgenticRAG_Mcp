@@ -1288,4 +1288,199 @@ public class DecompilerService
         var updateSucess = await _db.AssemblyMetadataCachedTypeCountPlus1Async(dllName);
         return updateSucess;
     }
+
+    // ========== 无状态反编译工具（任意本地 DLL，不写数据库和缓存文件）==========
+
+    /// 验证 dllPath 是否合法（非空、路径遍历、后缀、文件存在）
+    /// 注意：不调用 ContainsInvalidPathCharacters，因为完整 Windows 路径必然含反斜杠
+    private string? ValidateDllPath(string dllPath)
+    {
+        if (string.IsNullOrWhiteSpace(dllPath))
+            return "dllPath is null or empty";
+
+        // 防止目录遍历攻击
+        if (dllPath.Contains(".."))
+            return $"dllPath '{dllPath}' contains directory traversal pattern";
+
+        if (!dllPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            return $"dllPath '{dllPath}' must end with .dll";
+
+        if (!File.Exists(dllPath))
+            return $"DLL file not found: {dllPath}";
+
+        return null;
+    }
+
+    /// 列出任意 DLL 中的所有类型（通过 System.Reflection.Metadata 读取元数据，不写数据库和缓存）
+    public DecompileAnyListTypesResult DecompileAnyListTypes(string dllPath)
+    {
+        var result = new DecompileAnyListTypesResult { DllPath = dllPath };
+
+        var error = ValidateDllPath(dllPath);
+        if (error != null)
+        {
+            result.Success = false;
+            result.Message = error;
+            return result;
+        }
+
+        try
+        {
+            using var stream = File.OpenRead(dllPath);
+            using var peReader = new PEReader(stream);
+            var reader = peReader.GetMetadataReader();
+
+            foreach (var typeDefHandle in reader.TypeDefinitions)
+            {
+                var typeDef = reader.GetTypeDefinition(typeDefHandle);
+                var typeName = reader.GetString(typeDef.Name);
+                var namespaceName = reader.GetString(typeDef.Namespace);
+                var fullName = GetFullTypeName(reader, typeDef, typeName, namespaceName);
+
+                // 跳过编译器生成的类型
+                if (fullName.StartsWith("<") || fullName.Contains(">") ||
+                    fullName.StartsWith("__") || fullName.Contains("AnonymousType") ||
+                    fullName.Contains("DisplayClass"))
+                {
+                    continue;
+                }
+
+                result.Types.Add(new AnyDllTypeInfo
+                {
+                    TypeName = fullName,
+                    TypeKind = GetModelTypeKindFromMetadata(reader, typeDef).ToString()
+                });
+            }
+
+            result.Success = true;
+            result.TotalTypes = result.Types.Count;
+            result.Message = $"Found {result.TotalTypes} types in {dllPath}";
+        }
+        catch (System.Exception ex)
+        {
+            result.Success = false;
+            result.Message = $"Error reading types: {ex.Message}";
+            _logger.LogError(ex, "Error listing types from {DllPath}", dllPath);
+        }
+
+        return result;
+    }
+
+    /// 反编译任意 DLL 中的单个类型（不写数据库和缓存文件，仅使用内存 LRU 缓存避免重复加载 DLL）
+    public OnDemandDecompileResult DecompileAnyType(string dllPath, string typeName)
+    {
+        var result = new OnDemandDecompileResult { TypeName = typeName, DllName = Path.GetFileName(dllPath) };
+
+        var error = ValidateDllPath(dllPath);
+        if (error != null)
+        {
+            result.Success = false;
+            result.Message = error;
+            return result;
+        }
+
+        if (string.IsNullOrWhiteSpace(typeName))
+        {
+            result.Success = false;
+            result.Message = "typeName is null or empty";
+            return result;
+        }
+
+        try
+        {
+            var decompiler = GetOrCreateDecompiler(dllPath);
+            var typeSystem = decompiler.TypeSystem;
+            var targetType = typeSystem.MainModule.TypeDefinitions.FirstOrDefault(t => t.FullName == typeName);
+
+            if (targetType == null)
+            {
+                result.Success = false;
+                result.Message = $"Type '{typeName}' not found in {Path.GetFileName(dllPath)}";
+                return result;
+            }
+
+            var code = decompiler.DecompileTypeAsString(targetType.FullTypeName);
+
+            result.Success = true;
+            result.Code = code;
+            result.Message = "Decompiled successfully";
+            result.Source = "decompiler";
+        }
+        catch (System.Exception ex)
+        {
+            result.Success = false;
+            result.Message = $"Error decompiling type '{typeName}': {ex.Message}";
+            _logger.LogError(ex, "Error decompiling type {TypeName} from {DllPath}", typeName, dllPath);
+        }
+
+        return result;
+    }
+
+    /// 反编译任意 DLL 中的单个方法（不写数据库和缓存文件，不追踪调用链）
+    public MethodDecompileResult DecompileAnyMethod(string dllPath, string methodFullName)
+    {
+        var result = new MethodDecompileResult { MethodFullName = methodFullName };
+
+        // 校验 dllPath
+        var error = ValidateDllPath(dllPath);
+        if (error != null)
+        {
+            result.Success = false;
+            result.Message = error;
+            return result;
+        }
+
+        // 校验方法全名格式
+        var parts = methodFullName.Split('.');
+        if (parts.Length < 2)
+        {
+            result.Success = false;
+            result.Message = "方法全名格式错误，应为命名空间.类型名.方法名";
+            return result;
+        }
+
+        var methodName = parts[parts.Length - 1];
+        var typeName = string.Join(".", parts.Take(parts.Length - 1));
+
+        try
+        {
+            var decompiler = GetOrCreateDecompiler(dllPath);
+            var typeSystem = decompiler.TypeSystem;
+
+            // 查找类型
+            var type = typeSystem.FindType(new FullTypeName(typeName))?.GetDefinition();
+            if (type == null)
+            {
+                result.Success = false;
+                result.Message = $"Type '{typeName}' not found in {Path.GetFileName(dllPath)}";
+                return result;
+            }
+
+            // 查找方法
+            var method = type.Methods.FirstOrDefault(m => m.Name == methodName);
+            if (method == null)
+            {
+                result.Success = false;
+                result.Message = $"Method '{methodName}' not found in type '{typeName}'";
+                return result;
+            }
+
+            // 反编译单个方法
+            var methodCode = decompiler.DecompileAsString(method.MetadataToken);
+
+            result.Success = true;
+            result.MethodCode = methodCode;
+            result.TotalMethods = 1;
+            result.IncludeXmlDoc = true;
+            result.Message = $"Method '{methodFullName}' extracted successfully";
+        }
+        catch (System.Exception ex)
+        {
+            result.Success = false;
+            result.Message = $"Error extracting method '{methodFullName}': {ex.Message}";
+            _logger.LogError(ex, "Error extracting method {MethodFullName} from {DllPath}", methodFullName, dllPath);
+        }
+
+        return result;
+    }
 }
