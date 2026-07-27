@@ -23,7 +23,7 @@ builder.Configuration
 
 //设置命令行参数，命令行参数格式：--mode http --port 5000 --endpoint /mcp或 --mode stdio 
 var cmdMode = builder.Configuration.GetValue<string?>("mode");
-var mcpMode = !string.IsNullOrEmpty(cmdMode) ? cmdMode : "stdio"; //如果没有指定模式，默认使用stdio模式
+var mcpMode = !string.IsNullOrEmpty(cmdMode) ? cmdMode : "http"; //如果没有指定模式，默认使用HTTP模式（可通过双击exe直接启动）
 var cmdPort = builder.Configuration.GetValue<int?>("port");
 var httpPort = cmdPort.HasValue ? cmdPort.Value : 5000; //如果没有指定端口，默认使用5000端口
 var endPoint = !string.IsNullOrEmpty(builder.Configuration.GetValue<string?>("endpoint")) ? builder.Configuration.GetValue<string>("endpoint") : "/erp_decompiler_mcp"; //如果没有指定端点，默认使用/erp_decompiler_mcp

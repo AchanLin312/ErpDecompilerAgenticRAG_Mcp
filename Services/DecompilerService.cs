@@ -1291,16 +1291,14 @@ public class DecompilerService
 
     // ========== 无状态反编译工具（任意本地 DLL，不写数据库和缓存文件）==========
 
-    /// 验证 dllPath 是否合法（非空、路径遍历、后缀、文件存在）
-    /// 注意：不调用 ContainsInvalidPathCharacters，因为完整 Windows 路径必然含反斜杠
+    /// 验证 dllPath 是否合法（非空、含非法字符、后缀、文件存在）
     private string? ValidateDllPath(string dllPath)
     {
         if (string.IsNullOrWhiteSpace(dllPath))
             return "dllPath is null or empty";
 
-        // 防止目录遍历攻击
-        if (dllPath.Contains(".."))
-            return $"dllPath '{dllPath}' contains directory traversal pattern";
+        if (ErpHelper.ContainsInvalidPathCharacters(dllPath))
+            return $"dllPath '{dllPath}' contains invalid path characters";
 
         if (!dllPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             return $"dllPath '{dllPath}' must end with .dll";

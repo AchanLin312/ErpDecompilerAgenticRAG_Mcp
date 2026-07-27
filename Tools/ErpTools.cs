@@ -260,15 +260,14 @@ public class ErpTools
     }
 
     [McpServerTool(Name = "erp_decompile_method")]
-    [Description(@"读取指定的Dll中的单个Epicor方法的反编译源码，获取C# 代码逻辑但不包括被调用方法的实现（只能获取已缓存的反编译的类型中的方法的源码，如果类型之前未反编译过，也就没有缓存，会报错！），支持自动递归追踪其调用的私有/静态方法（但是只能递归追踪同一个类型文件内的方法，不能跨类型文件调用）。
+    [Description(@"⚠️ 仅适用于 Epicor 配置路径下的 DLL！如果是本地任意路径的 DLL，请使用 decompile_any_method。
+
+读取 Epicor DLL 中单个方法的反编译 C# 源码。如果方法所属类型未缓存，会自动反编译并缓存该类型。
 
 必需参数：
 - methodFullName: 方法的全限定名（如 Erp.BO.PartSvc.GetPart）
 - dllName: DLL名称（如 Erp.Services.BO.Part.dll）
-- pathAlias: 限定搜索的路径别名（可选，默认为 default）
-
-提示：
-如果需要了解方法内部调用的其他方法，可以单独调用此工具获取。
+- pathAlias: 路径别名（可选，默认为 default，可通过 erp_list_paths 查看）
 
     ")]
     //该tool会优先去数据库和缓存中找这个method的类型的源代码，但即使类型已缓存，也用 CSharpDecompiler 反编译单个方法
@@ -320,7 +319,10 @@ public class ErpTools
     // ========== 无状态反编译工具（任意本地 DLL）==========
 
     [McpServerTool(Name = "decompile_any_list_types")]
-    [Description(@"列出本地计算机上任意 .NET DLL 文件中的所有类型（通过元数据读取，速度极快）。配合erp_search_members, erp_decompile_any_type工具使用。
+    [Description(@"⚠️ 适用于任意本地路径的 .NET DLL（不在 Epicor 配置路径下）。Epicor DLL 请使用 erp_ 系列工具。
+
+列出指定 DLL 文件中的所有类型（通过元数据读取，极快）。不写数据库和缓存，纯只读。
+建议先调用此工具了解 DLL 结构，再配合 decompile_any_type / decompile_any_method 深入分析。
 
 必需参数：
 - dllPath: DLL 文件的完整路径（如 C:\\Users\\...\\bin\\Debug\\net9.0\\MyApp.dll）")]
@@ -336,7 +338,10 @@ public class ErpTools
     }
 
     [McpServerTool(Name = "decompile_any_type")]
-    [Description(@"反编译本地计算机上任意 .NET DLL 文件中的单个类型的完整 C# 源码。配合erp_search_members, erp_decompile_any_type工具使用。
+    [Description(@"⚠️ 适用于任意本地路径的 .NET DLL（不在 Epicor 配置路径下）。Epicor DLL 请使用 erp_ 系列工具。
+
+反编译指定 DLL 中单个类型的完整 C# 源码。不写数据库和缓存，仅用内存 LRU 缓存避免重复加载 DLL。
+建议先调用 decompile_any_list_types 获取类型列表，再选择目标类型。
 
 必需参数：
 - dllPath: DLL 文件的完整路径
@@ -354,7 +359,10 @@ public class ErpTools
     }
 
     [McpServerTool(Name = "decompile_any_method")]
-    [Description(@"反编译本地计算机上任意 .NET DLL 文件中的单个方法的 C# 源码。配合erp_search_members, erp_decompile_any_type工具使用。
+    [Description(@"⚠️ 适用于任意本地路径的 .NET DLL（不在 Epicor 配置路径下）。Epicor DLL 请使用 erp_decompile_method。
+
+反编译指定 DLL 中单个方法的 C# 源码。不追踪调用链，不写数据库和缓存。
+建议先调用 decompile_any_list_types 了解类型和方法名。
 
 必需参数：
 - dllPath: DLL 文件的完整路径
@@ -368,6 +376,7 @@ public class ErpTools
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = true
+
         });
     }
 
