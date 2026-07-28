@@ -1297,8 +1297,9 @@ public class DecompilerService
         if (string.IsNullOrWhiteSpace(dllPath))
             return "dllPath is null or empty";
 
-        if (ErpHelper.ContainsInvalidPathCharacters(dllPath))
-            return $"dllPath '{dllPath}' contains invalid path characters";
+        // 只检查目录遍历攻击，不检查反斜杠等合法 Windows 路径字符
+        if (dllPath.Contains(".."))
+            return $"dllPath '{dllPath}' contains directory traversal pattern";
 
         if (!dllPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             return $"dllPath '{dllPath}' must end with .dll";
