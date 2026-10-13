@@ -57,6 +57,26 @@ builder.Services.Configure<ErpConfig>(
     builder.Configuration.GetSection("ErpConfig")
 );
 
+// ===== Layer 工具的 Epicor REST 连接配置（认证方式与 Erp-Mcp-Bridge 保持一致：Basic Auth + X-API-Key）=====
+var layerConnConfig = new EpicorConnectionConfig();
+builder.Configuration.GetSection("EpicorConnection").Bind(layerConnConfig);
+builder.Services.AddSingleton(layerConnConfig);
+
+// 命名 HttpClient：Epicor REST API V2 调用专用（无状态，线程安全）
+builder.Services.AddHttpClient("EpicorLayer", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(layerConnConfig.TimeoutSeconds > 0 ? layerConnConfig.TimeoutSeconds : 300);
+    var authToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{layerConnConfig.UserName}:{layerConnConfig.Password}"));
+    client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authToken);
+    if (!string.IsNullOrWhiteSpace(layerConnConfig.ApiKey))
+    {
+        client.DefaultRequestHeaders.Add("X-API-Key", layerConnConfig.ApiKey);
+    }
+});
+
+builder.Services.AddSingleton<EpicorLayerClient>();
+builder.Services.AddSingleton<LayerService>();
+
 //拿到一个ErpConfig实例并注册为单例服务，这样其他地方通过DI注入ErpConfig类时就可以直接拿到配置好的对象
 builder.Services.AddSingleton<ErpConfig>(sp =>
     {

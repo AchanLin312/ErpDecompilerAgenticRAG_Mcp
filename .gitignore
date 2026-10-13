@@ -59,3 +59,6 @@ Desktop.ini
 DecompiledCache/
 DecompiledCode/
 decompiled/
+
+# 发布压缩包（超过 GitHub 100MB 限制，不入库）
+*.zip
